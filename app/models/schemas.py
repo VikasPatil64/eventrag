@@ -1,10 +1,8 @@
 """
-Pydantic v2 models shared across the ingestion and retrieval pipelines.
+Shared data models used across the ingestion and retrieval pipeline.
 
-FIX B-06: source_id: str = None → Optional[str] = None (Pydantic v2 requires
-          Optional for fields that can be None).
-FIX B-07: RAQQueryResult typo renamed to RAGQueryResult; added proper fields.
-FIX B-18: rag_query_pdf_ai now returns RAGQueryResult not RAGSearchResult.
+These models are passed between different steps of the RAG workflow
+and keep the data structure consistent throughout the application.
 """
 
 from typing import Optional
@@ -13,31 +11,40 @@ import pydantic
 
 
 class RAGChunkAndSrc(pydantic.BaseModel):
-    """Output of the load-and-chunk step."""
+    """
+    Represents the output of the PDF parsing step.
+
+    Stores the text chunks extracted from a document along with
+    an optional source identifier.
+    """
 
     chunks: list[str]
-    # FIX B-06: was `str = None` — Pydantic v2 raises a validation error for that.
     source_id: Optional[str] = None
 
 
 class RAGUpsertResult(pydantic.BaseModel):
-    """Output of the embed-and-upsert step."""
+    """
+    Stores metadata about the vector database insertion process.
+    """
 
     ingested: int
     source_id: Optional[str] = None
 
 
 class RAGSearchResult(pydantic.BaseModel):
-    """Output of the embed-and-search step."""
+    """
+    Represents the chunks retrieved from semantic search
+    together with their corresponding source identifiers.
+    """
 
     contexts: list[str]
     sources: list[str]
 
 
 class RAGQueryResult(pydantic.BaseModel):
-    """Final output of the rag_query_pdf_ai function.
-
-    FIX B-07: was named RAQQueryResult (typo). Now correctly RAGQueryResult.
+    """
+    Final response returned to the user after retrieval
+    and answer generation.
     """
 
     answer: str
