@@ -1,0 +1,31 @@
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+
+# Uploaded PDFs
+uploads/
+
+# Qdrant local storage
+qdrant_storage/
+
+# VSCode settings
+.vscode/
+
+# Logs
+*.log
+
+# Test artifacts
+.pytest_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+#test
+test.py
