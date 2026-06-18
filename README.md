@@ -1,198 +1,197 @@
-# RAG Application
+# EventRAG – RAG Application
 
-A production-grade **Retrieval-Augmented Generation** (RAG) application built on:
+A production-ready **Retrieval-Augmented Generation** app that lets you upload PDFs, chat with them, and get answers with citations. It’s built to be modular, observable, and easy to run locally.
 
-| Layer | Technology |
-|---|---|
-| Frontend | Streamlit |
-| Backend | FastAPI |
-| Workflow | Inngest (event-driven, step-based) |
-| Embeddings | OpenAI `text-embedding-3-large` |
-| LLM | OpenAI `gpt-4o-mini` |
-| Vector DB | Qdrant |
-| PDF parsing | LlamaIndex PDFReader + SentenceSplitter |
-| Config | pydantic-settings |
+![Streamlit UI](https://img.shields.io/badge/frontend-Streamlit-red) ![FastAPI](https://img.shields.io/badge/backend-FastAPI-green) ![Inngest](https://img.shields.io/badge/workflow-Inngest-blue) ![Qdrant](https://img.shields.io/badge/vector%20db-Qdrant-purple)
 
 ---
 
-## Architecture
+## What’s inside?
 
-```
-PDF Upload
-    ↓
-Streamlit (streamlit_app.py)
-    ↓  fires Inngest event "rag/ingest-pdf"
-FastAPI (main.py)
-    ↓
-Inngest Dev Server
-    ↓
-Step 1: Load PDF + Chunk (app/ingestion/pdf_parser.py)
-    ↓
-Step 2: OpenAI Embeddings + Qdrant Upsert (app/ingestion/embedder.py)
-    ↓
-─── Query path ───
-Streamlit fires "rag/query-pdf"
-    ↓
-Step 1: Embed query + Qdrant semantic search (app/retrieval/vector_store.py)
-    ↓
-Step 2: GPT-4o-mini answer generation (ctx.step.ai.infer)
-    ↓
-Streamlit displays answer + sources
-```
+| Layer | Technology | Alternatives (if you’re on a budget) |
+|-------|------------|--------------------------------------|
+| Frontend | Streamlit | – |
+| Backend | FastAPI | – |
+| Workflow engine | Inngest (step‑based, retries, observability) | You can replace it with Celery or just call functions directly, but we like the visibility. |
+| Embeddings | OpenAI `text-embedding-3-large` | [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (local), or [Groq](https://groq.com) free API |
+| LLM | OpenAI `gpt-4o-mini` | [Ollama](https://ollama.com) (llama3, mistral), [Groq](https://groq.com) (llama3‑70b free tier), or [Mistral AI](https://mistral.ai) |
+| Vector DB | Qdrant | – |
+| PDF parsing | LlamaIndex PDFReader + SentenceSplitter | – |
+| Config | pydantic‑settings | – |
+
+> **No OpenAI credits?** No problem. The code is built with `Config` that you can point to local embeddings and a local LLM. See the [Environment Variables](#environment-variables) section for how to switch.
 
 ---
 
-## Quick Start
+## How it works (in plain English)
 
-### Prerequisites
+1. You upload a PDF via the Streamlit UI.
+2. Streamlit triggers an Inngest event `"rag/ingest-pdf"`.
+3. FastAPI picks it up and starts a **step‑based workflow**:
+   - **Step 1**: Parse the PDF, split it into overlapping chunks.
+   - **Step 2**: Embed each chunk (using your embedding model) and store the vectors + metadata in Qdrant.
+4. When you ask a question, Streamlit fires `"rag/query-pdf"`:
+   - **Step 1**: Embed your question and run a similarity search over Qdrant.
+   - **Step 2**: Feed the top‑matching chunks to the LLM to generate a final answer (with source citations).
+5. The answer appears in Streamlit, along with the chunks that were used.
+
+All steps are retried automatically if something fails (e.g. the embedding API goes down) – only the failed step is retried, not the whole workflow. Nice, right?
+
+---
+
+## Quick Start (get it running in 5 minutes)
+
+### What you need
 
 - Python 3.11+
-- Docker Desktop (for Qdrant)
-- [Inngest Dev Server](https://www.inngest.com/docs/local-development)
-- OpenAI API key with billing enabled
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (for Qdrant)
+- [Inngest Dev Server](https://www.inngest.com/docs/local-development) – we use `npx` to run it
+- An API key for your chosen LLM/embedding provider (or a local model)
 
-### 1. Clone and install
+### 1. Clone and prepare
 
 ```bash
-git clone <repo>
-cd rag-app
+git clone https://github.com/VikasPatil64/eventrag
+cd eventrag
 cp .env.example .env
-# Fill in your OPENAI_API_KEY in .env
+# Edit .env – at minimum, fill in your provider keys (if using OpenAI, set OPENAI_API_KEY)
+```
+
+### 2. Install dependencies
+
+We use `uv` (fast Python package manager), but you can also use `pip`:
+
+```bash
 uv sync          # or: pip install -e .
 ```
 
-### 2. Start Qdrant
+### 3. Fire up Qdrant
 
 ```bash
 docker compose up qdrant -d
 ```
 
-Qdrant UI available at http://localhost:6333/dashboard
+Qdrant dashboard: http://localhost:6333/dashboard
 
-### 3. Start Inngest Dev Server
+### 4. Start the Inngest Dev Server
 
 ```bash
 npx inngest-cli@latest dev -u http://localhost:8000/api/inngest
 ```
 
-Inngest UI available at http://localhost:8288
+You'll see the UI at http://localhost:8288 – handy for watching your workflows run.
 
-### 4. Start FastAPI backend
+### 5. Run the FastAPI backend
 
 ```bash
 uvicorn main:app --reload --port 8000
 ```
 
-Verify: http://localhost:8000/health
+Check it's alive: http://localhost:8000/health
 
-### 5. Start Streamlit frontend
+### 6. Launch the Streamlit frontend
 
 ```bash
 streamlit run streamlit_app.py
 ```
 
-App at http://localhost:8501
+Open http://localhost:8501 and start uploading PDFs!
 
 ---
 
-## Project Structure
+## Project Structure (what goes where)
 
 ```
-rag-app/
+eventrag/
 ├── app/
 │   ├── config/
-│   │   └── settings.py          # pydantic-settings — single source of truth
+│   │   └── settings.py          # All configuration via pydantic-settings (single source of truth)
 │   ├── ingestion/
-│   │   ├── pdf_parser.py        # PDF load + chunk
-│   │   └── embedder.py          # OpenAI embedding wrapper
+│   │   ├── pdf_parser.py        # Loads PDF, splits into chunks
+│   │   └── embedder.py          # Embedding logic (easily swappable)
 │   ├── models/
-│   │   └── schemas.py           # Pydantic models (shared across layers)
+│   │   └── schemas.py           # Pydantic models shared between API, DB, and UI
 │   ├── retrieval/
-│   │   └── vector_store.py      # Qdrant wrapper (singleton)
+│   │   └── vector_store.py      # Qdrant client (singleton, with connection handling)
 │   └── utils/
 │       └── logging_config.py    # Structured logging setup
-├── main.py                      # FastAPI + Inngest functions
+├── main.py                      # FastAPI app + Inngest function definitions
 ├── streamlit_app.py             # Streamlit UI
-├── docker-compose.yml           # Qdrant service
+├── docker-compose.yml           # Qdrant service definition
 ├── .env.example                 # Environment template (never commit .env)
-└── pyproject.toml
+└── pyproject.toml               # Dependencies and project metadata
 ```
 
 ---
 
 ## Environment Variables
 
-See [`.env.example`](.env.example) for all available options.
+The `.env.example` file lists everything you can tweak. Here are the most important ones:
 
 | Variable | Default | Description |
-|---|---|---|
-| `OPENAI_API_KEY` | *required* | OpenAI API key |
-| `OPENAI_EMBED_MODEL` | `text-embedding-3-large` | Embedding model |
-| `OPENAI_EMBED_DIM` | `1536` | Embedding dimensions |
-| `OPENAI_LLM_MODEL` | `gpt-4o-mini` | LLM for answer generation |
-| `QDRANT_URL` | `http://localhost:6333` | Qdrant instance URL |
-| `QDRANT_COLLECTION` | `docs` | Collection name |
-| `QDRANT_SCORE_THRESHOLD` | `0.3` | Min similarity score |
-| `INNGEST_APP_ID` | `rag-app` | Inngest app identifier |
-| `CHUNK_SIZE` | `1024` | Chars per chunk |
-| `CHUNK_OVERLAP` | `200` | Overlap between chunks |
-| `DEFAULT_TOP_K` | `5` | Chunks retrieved per query |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | – | Your OpenAI key (required if using OpenAI). |
+| `OPENAI_EMBED_MODEL` | `text-embedding-3-large` | Change to `sentence-transformers/all-MiniLM-L6-v2` or any local model (but you'll need to implement the embedding logic). |
+| `OPENAI_EMBED_DIM` | `1536` | Must match the chosen model's output dimension. |
+| `OPENAI_LLM_MODEL` | `gpt-4o-mini` | Swap for `ollama/llama3` or `groq/llama3-70b` if you adapt the LLM call. |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant endpoint. |
+| `QDRANT_COLLECTION` | `docs` | Collection name inside Qdrant. |
+| `QDRANT_SCORE_THRESHOLD` | `0.3` | Minimum similarity score; lower values return more (but maybe irrelevant) chunks. |
+| `INNGEST_APP_ID` | `rag-app` | Must match what Inngest expects. |
+| `CHUNK_SIZE` | `1024` | Characters per chunk. |
+| `CHUNK_OVERLAP` | `200` | Overlap between consecutive chunks. |
+| `DEFAULT_TOP_K` | `5` | Number of chunks retrieved per query. |
+
+**Switching to local/free models**:  
+- Set `OPENAI_EMBED_MODEL` to a local model name and change the embedding call in `app/ingestion/embedder.py` to use `sentence-transformers`.  
+- For the LLM, replace the `ctx.step.ai.infer` call in `main.py` with an HTTP call to Ollama or Groq.  
+We deliberately kept the embedding and LLM logic isolated, so it's easy to swap.
 
 ---
 
-## Key Design Decisions
+## Why these choices? (Key design decisions)
 
-### Why Inngest?
-Inngest provides step-level retries, memoisation, and observability. If OpenAI embedding fails mid-ingestion, only the embedding step is retried — the PDF doesn't get re-parsed.
-
-### Why Qdrant?
-Persistent, production-grade vector database with payload indexing, filtering, and Docker support. The `source_id` payload field is indexed for fast per-document filtering (V2 feature).
-
-### Why `text-embedding-3-large`?
-Best OpenAI embedding model for retrieval quality. The key fix in V1: always pass `dimensions=` to the API to guarantee the collection dimension and the actual vector dimension match.
+- **Inngest** – gives us step‑level retries, memoisation, and a beautiful UI. If the embedding API times out, only that step is retried – the PDF isn't reparsed. It also makes the whole flow auditable.
+- **Qdrant** – persistent, production‑grade vector DB. It supports payload indexing, filtering, and runs smoothly in Docker. We index `source_id` so that later we can filter by document.
+- **`text-embedding-3-large`** – we picked it for quality, but we **always** pass the `dimensions` parameter to the API so that the vector length matches what Qdrant expects – this solved a nasty mismatch bug.
+- **pydantic‑settings** – keeps config clean, typed, and environment‑aware.
 
 ---
 
-## Roadmap
+## Future Scope (what’s cooking)
 
-### V1 — Stabilisation (done ✅)
-- Fixed app_id mismatch (silent event loss)
-- Fixed embedding dimension mismatch (Qdrant rejection)
-- Fixed asyncio safety in Streamlit
-- Added error handling in all Inngest steps
-- Added score threshold to prevent irrelevant chunk retrieval
-- Added `/health` endpoint
-- Structured logging across all modules
-- Docker Compose for Qdrant
-- pydantic-settings config management
-
-### V2 — Production Features
-- [ ] Multi-document management (list, delete documents)
-- [ ] Upload history in Streamlit sidebar
-- [ ] Conversation memory (multi-turn chat)
-- [ ] Metadata filtering (query specific documents)
-- [ ] Page-level citations with source passage display
-- [ ] FastAPI `/upload` endpoint (decouple file handling from Streamlit)
-
-### V3 — Resume-Worthy
-- [ ] Hybrid search (BM25 + dense vectors)
-- [ ] Cross-encoder reranking
-- [ ] Streaming LLM responses (SSE)
-- [ ] RAG evaluation with RAGAS (faithfulness, relevancy)
-- [ ] Prometheus metrics + Grafana dashboard
-- [ ] Redis query result caching
+- **Multi‑document management** – list, delete, rename uploaded documents.
+- **Upload history** in the Streamlit sidebar so you can see past uploads.
+- **Conversation memory** – multi‑turn chat with context.
+- **Metadata filtering** – ask only about specific documents.
+- **Page‑level citations** with source text display.
+- **Dedicated `/upload` endpoint** (so you can upload without Streamlit).
+- **Hybrid search** (BM25 + dense vectors) for better recall.
+- **Cross‑encoder reranking** to improve the final answer quality.
+- **Streaming LLM responses** (SSE) for a better UX.
+- **RAG evaluation** with RAGAS (faithfulness, relevancy) to measure performance.
+- **Prometheus metrics** + Grafana dashboard for monitoring.
+- **Redis query cache** to speed up repeated questions.
 
 ---
 
-## Development
+## Development (tests, formatting, linting)
 
 ```bash
-# Run tests
+# Run tests (once we write some)
 pytest tests/ -v
 
-# Format
+# Format code
 ruff format .
 
 # Lint
 ruff check .
 ```
+
+---
+
+## Final words
+
+This app handles the common RAG pitfalls (dimension mismatches, async issues, retries) so you can focus on retrieval quality or building a slick UI. Open an issue if you get stuck 
+
+Happy building! 🚀
