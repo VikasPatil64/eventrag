@@ -1,35 +1,121 @@
-import asyncio
-from pathlib import Path
-import time
+"""
+Streamlit frontend for the RAG application.
 
+BUG FIXES APPLIED
+─────────────────
+B-01  Inngest client uses settings.inngest_app_id — identical to main.py.
+      The old mismatch ("rag-app" server, "rag_app" client) caused every
+      event to fire but possibly route incorrectly.
+
+B-03  asyncio.run() replaced with a thread-isolated event loop so Streamlit's
+      own internal async machinery never collides with ours.
+
+B-13  Inngest run status correctly checked for "Completed" (Inngest's actual
+      terminal success value). Previous code checked a grab-bag of invented
+      status strings ("Succeeded", "Success", "Finished") that Inngest never
+      emits; and "Completed" was already in the list, so the real fix is
+      removing the noise and documenting the real states:
+          Running → Completed | Failed | Cancelled
+
+NOTE on event name: rag_query_pdf_ai in main.py now listens on "rag/query-pdf"
+(hyphen-separated, consistent with "rag/ingest-pdf"). The old event name was
+"rag/query_pdf_ai" (snake_case mix) — fixed on both sides.
+"""
+
+import threading
+import asyncio
+import time
+from pathlib import Path
+
+import requests
 import streamlit as st
 import inngest
 from dotenv import load_dotenv
-import os
-import requests
+
+from app.config.settings import get_settings
 
 load_dotenv()
 
-st.set_page_config(page_title="RAG Ingest PDF", page_icon="📄", layout="centered")
+settings = get_settings()
+
+# ── Page config ────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="RAG — Document QA",
+    page_icon="📚",
+    layout="centered",
+    initial_sidebar_state="expanded",
+)
+
+# ── Sidebar ────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.title("⚙️ Settings")
+    top_k = st.slider(
+        "Chunks to retrieve (top-k)",
+        min_value=1,
+        max_value=20,
+        value=settings.default_top_k,
+        step=1,
+        help="How many document chunks are retrieved and sent to the LLM.",
+    )
+    st.caption(f"**Embed model:** `{settings.openai_embed_model}`")
+    st.caption(f"**LLM:** `{settings.openai_llm_model}`")
+    st.caption(f"**Collection:** `{settings.qdrant_collection}`")
+    st.caption(f"**Embed dim:** `{settings.openai_embed_dim}`")
+
+    st.divider()
+    if st.button("🏥 Health check"):
+        try:
+            r = requests.get("http://localhost:8000/health", timeout=5)
+            r.raise_for_status()
+            data = r.json()
+            st.success(f"API: {data.get('status')} | Qdrant: {data.get('qdrant')}")
+        except Exception as exc:
+            st.error(f"Health check failed: {exc}")
 
 
+# ── Inngest client (cached so one instance per Streamlit session) ───────────
 @st.cache_resource
-def get_inngest_client() -> inngest.Inngest:
-    return inngest.Inngest(app_id="rag_app", is_production=False)
+def _inngest_client() -> inngest.Inngest:
+    # FIX B-01: uses the same app_id as main.py via settings.
+    return inngest.Inngest(app_id=settings.inngest_app_id, is_production=False)
 
 
-def save_uploaded_pdf(file) -> Path:
-    uploads_dir = Path("uploads")
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-    file_path = uploads_dir / file.name
-    file_bytes = file.getbuffer()
-    file_path.write_bytes(file_bytes)
-    return file_path
+# ── Async event helpers ─────────────────────────────────────────────────────
+
+def _run_async(coro) -> object:
+    """
+    FIX B-03: Run an async coroutine safely from Streamlit's sync context.
+
+    asyncio.run() fails with "This event loop is already running" in some
+    Streamlit versions.  We spin up a *new* event loop in a daemon thread,
+    execute the coroutine there, and block until done.  This avoids the
+    nest_asyncio hack and works in all environments.
+    """
+    result_holder: list = []
+    error_holder: list = []
+
+    def _target():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result_holder.append(loop.run_until_complete(coro))
+        except Exception as exc:
+            error_holder.append(exc)
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    t.join()
+
+    if error_holder:
+        raise error_holder[0]
+    return result_holder[0] if result_holder else None
 
 
-async def send_rag_ingest_event(pdf_path: Path) -> None:
-    client = get_inngest_client()
-    await client.send(
+async def _send_ingest_event(pdf_path: Path) -> str:
+    client = _inngest_client()
+    events = await client.send(
         inngest.Event(
             name="rag/ingest-pdf",
             data={
@@ -38,88 +124,167 @@ async def send_rag_ingest_event(pdf_path: Path) -> None:
             },
         )
     )
+    return events[0] if events else ""
 
 
-st.title("Upload a PDF to Ingest")
-uploaded = st.file_uploader("Choose a PDF", type=["pdf"], accept_multiple_files=False)
-
-if uploaded is not None:
-    with st.spinner("Uploading and triggering ingestion..."):
-        path = save_uploaded_pdf(uploaded)
-        # Kick off the event and block until the send completes
-        asyncio.run(send_rag_ingest_event(path))
-        # Small pause for user feedback continuity
-        time.sleep(0.3)
-    st.success(f"Triggered ingestion for: {path.name}")
-    st.caption("You can upload another PDF if you like.")
-
-st.divider()
-st.title("Ask a question about your PDFs")
-
-
-async def send_rag_query_event(question: str, top_k: int) -> None:
-    client = get_inngest_client()
-    result = await client.send(
+async def _send_query_event(question: str, top_k: int) -> str:
+    client = _inngest_client()
+    # FIX: event name now "rag/query-pdf" — matches trigger in main.py.
+    events = await client.send(
         inngest.Event(
-            name="rag/query_pdf_ai",
-            data={
-                "question": question,
-                "top_k": top_k,
-            },
+            name="rag/query-pdf",
+            data={"question": question, "top_k": top_k},
         )
     )
+    return events[0] if events else ""
 
-    return result[0]
 
+# ── Inngest run polling ─────────────────────────────────────────────────────
 
 def _inngest_api_base() -> str:
-    # Local dev server default; configurable via env
-    return os.getenv("INNGEST_API_BASE", "http://127.0.0.1:8288/v1")
+    return f"{settings.inngest_dev_server_url}/v1"
 
 
-def fetch_runs(event_id: str) -> list[dict]:
+def _fetch_runs(event_id: str) -> list[dict]:
     url = f"{_inngest_api_base()}/events/{event_id}/runs"
-    resp = requests.get(url)
+    resp = requests.get(url, timeout=10)
     resp.raise_for_status()
-    data = resp.json()
-    return data.get("data", [])
+    return resp.json().get("data", [])
 
 
-def wait_for_run_output(event_id: str, timeout_s: float = 120.0, poll_interval_s: float = 0.5) -> dict:
-    start = time.time()
-    last_status = None
+def _wait_for_run_output(
+    event_id: str,
+    timeout_s: float = 180.0,
+    poll_interval_s: float = 0.75,
+) -> dict:
+    """
+    Poll Inngest dev-server until the function run reaches a terminal state.
+
+    FIX B-13: Inngest run statuses are: Running | Completed | Failed | Cancelled.
+    The old code checked ("Completed","Succeeded","Success","Finished") — the
+    last three are not real Inngest values.  We now check exactly "Completed".
+    """
+    start = time.monotonic()
+    last_status: str | None = None
+
     while True:
-        runs = fetch_runs(event_id)
+        runs = _fetch_runs(event_id)
         if runs:
             run = runs[0]
-            status = run.get("status")
+            status: str = run.get("status", "")
             last_status = status or last_status
-            if status in ("Completed", "Succeeded", "Success", "Finished"):
-                return run.get("output") or {}
+
+            if status == "Completed":
+                raw_output = run.get("output") or {}
+                # Defensively handle Inngest's potential wrapping of output.
+                if isinstance(raw_output, dict) and "body" in raw_output:
+                    return raw_output["body"]
+                return raw_output
+
             if status in ("Failed", "Cancelled"):
-                raise RuntimeError(f"Function run {status}")
-        if time.time() - start > timeout_s:
-            raise TimeoutError(f"Timed out waiting for run output (last status: {last_status})")
+                raise RuntimeError(
+                    f"Inngest function run ended with status '{status}'. "
+                    "Check the Inngest Dev Server UI at http://localhost:8288 "
+                    "for the full error trace."
+                )
+
+        if time.monotonic() - start > timeout_s:
+            raise TimeoutError(
+                f"Timed out after {timeout_s}s waiting for Inngest run "
+                f"(event_id={event_id!r}, last_status={last_status!r}). "
+                "Is the FastAPI server running on port 8000?"
+            )
+
         time.sleep(poll_interval_s)
 
 
+# ── File upload helper ──────────────────────────────────────────────────────
+
+def _save_uploaded_pdf(file) -> Path:
+    upload_dir = Path(settings.upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    dest = upload_dir / file.name
+    dest.write_bytes(file.getbuffer())
+    return dest
+
+
+# ── UI ──────────────────────────────────────────────────────────────────────
+
+st.title("📚 Document QA — RAG Application")
+st.caption(
+    "Upload a PDF to ingest it into the knowledge base, "
+    "then ask questions about its contents."
+)
+
+# ── Section 1: Upload ───────────────────────────────────────────────────────
+st.subheader("1️⃣  Ingest a PDF")
+uploaded = st.file_uploader(
+    "Choose a PDF file",
+    type=["pdf"],
+    accept_multiple_files=False,
+    help="The PDF will be chunked, embedded with OpenAI, and stored in Qdrant.",
+)
+
+if uploaded is not None:
+    with st.spinner(f"Saving and triggering ingestion of **{uploaded.name}**…"):
+        pdf_path = _save_uploaded_pdf(uploaded)
+        event_id = _run_async(_send_ingest_event(pdf_path))  # type: ignore[arg-type]
+
+    if event_id:
+        st.success(
+            f"✅ Ingestion triggered for **{uploaded.name}**  \n"
+            f"Event ID: `{event_id}`  \n"
+            "Processing happens asynchronously — watch the "
+            "[Inngest Dev Server](http://localhost:8288) for progress."
+        )
+    else:
+        st.warning(
+            "Event sent but no event ID returned. "
+            "Check that the Inngest Dev Server is running at "
+            f"`{settings.inngest_dev_server_url}`."
+        )
+
+st.divider()
+
+# ── Section 2: Query ────────────────────────────────────────────────────────
+st.subheader("2️⃣  Ask a Question")
+
 with st.form("rag_query_form"):
-    question = st.text_input("Your question")
-    top_k = st.number_input("How many chunks to retrieve", min_value=1, max_value=20, value=5, step=1)
-    submitted = st.form_submit_button("Ask")
+    question = st.text_area(
+        "Your question",
+        placeholder="What is the main topic of the document?",
+        height=80,
+    )
+    submitted = st.form_submit_button("🔍 Ask", use_container_width=True)
 
-    if submitted and question.strip():
-        with st.spinner("Sending event and generating answer..."):
-            # Fire-and-forget event to Inngest for observability/workflow
-            event_id = asyncio.run(send_rag_query_event(question.strip(), int(top_k)))
-            # Poll the local Inngest API for the run's output
-            output = wait_for_run_output(event_id)
-            answer = output.get("answer", "")
-            sources = output.get("sources", [])
+if submitted and question.strip():
+    with st.spinner("Embedding query and searching knowledge base…"):
+        try:
+            event_id = _run_async(_send_query_event(question.strip(), int(top_k)))
+            output = _wait_for_run_output(event_id)
+        except TimeoutError as exc:
+            st.error(f"⏱️ Timeout: {exc}")
+            st.stop()
+        except RuntimeError as exc:
+            st.error(f"❌ Function failed: {exc}")
+            st.stop()
+        except Exception as exc:
+            st.error(f"Unexpected error: {exc}")
+            st.stop()
 
-        st.subheader("Answer")
-        st.write(answer or "(No answer)")
-        if sources:
-            st.caption("Sources")
+    answer: str = output.get("answer", "")
+    sources: list[str] = output.get("sources", [])
+    num_contexts: int = output.get("num_contexts", 0)
+
+    st.subheader("💬 Answer")
+    st.write(answer or "*(No answer returned)*")
+
+    st.caption(f"Retrieved **{num_contexts}** context chunk(s) from Qdrant.")
+
+    if sources:
+        with st.expander("📄 Sources"):
             for s in sources:
-                st.write(f"- {s}")
+                st.write(f"- `{s}`")
+
+elif submitted and not question.strip():
+    st.warning("Please enter a question before submitting.")

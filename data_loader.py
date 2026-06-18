@@ -1,32 +1,13 @@
-from openai import OpenAI
-from llama_index.readers.file import PDFReader
-from llama_index.core.node_parser import SentenceSplitter
-from dotenv import load_dotenv
+"""
+DEPRECATED — replaced by app/ingestion/pdf_parser.py and app/ingestion/embedder.py
 
-load_dotenv()
+This file is kept temporarily for reference only.
+Do NOT import from it — all imports should use the new module paths:
 
-client = OpenAI()
-EMBED_MODEL = "text-embedding-3-large"
-EMBED_DIM = 3072
-
-splitter = SentenceSplitter(chunk_size=1000, chunk_overlap=200)
-
-def load_and_chunk_pdf(path: str):
-    docs = PDFReader().load_data(file=path)
-    texts = [d.text for d in docs if getattr(d, "text", None)]
-    chunks = []
-    for t in texts:
-        chunks.extend(splitter.split_text(t))
-        
-    return chunks
-
-def embed_texts(texts: list[str]) -> list[list[float]]:
-    response = client.embeddings.create(
-        model=EMBED_MODEL,
-        input=texts,
-        
-    )
-
-    return [item.embedding for item in response.data]
-
-
+    from app.ingestion.pdf_parser import load_and_chunk_pdf
+    from app.ingestion.embedder import embed_texts
+"""
+raise ImportError(
+    "data_loader.py is deprecated. "
+    "Import from app.ingestion.pdf_parser and app.ingestion.embedder instead."
+)

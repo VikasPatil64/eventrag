@@ -1,0 +1,42 @@
+services:
+  # ── Qdrant Vector Database ───────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag-qdrant
+    ports:
+      - "6333:6333"   # REST API + Swagger UI
+      - "6334:6334"   # gRPC (optional)
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__LOG_LEVEL=INFO
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── FastAPI backend (optional — run locally with uvicorn for dev) ─────────
+  # Uncomment when you want a fully containerised stack.
+  # backend:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: rag-backend
+  #   ports:
+  #     - "8000:8000"
+  #   env_file: .env
+  #   environment:
+  #     - QDRANT_URL=http://qdrant:6333   # use service name inside Docker network
+  #   depends_on:
+  #     qdrant:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./uploads:/app/uploads
+  #   restart: unless-stopped
+
+volumes:
+  qdrant_data:
+    driver: local
