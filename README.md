@@ -1,13 +1,37 @@
 # EventRAG – RAG Application
 
+<<<<<<< HEAD
 A production-ready **Retrieval-Augmented Generation** app that lets you upload PDFs, chat with them, and get answers with citations. It’s built to be modular, observable, and easy to run locally.
 
 ![Streamlit UI](https://img.shields.io/badge/frontend-Streamlit-red) ![FastAPI](https://img.shields.io/badge/backend-FastAPI-green) ![Inngest](https://img.shields.io/badge/workflow-Inngest-blue) ![Qdrant](https://img.shields.io/badge/vector%20db-Qdrant-purple)
 
 ---
+=======
+A Retrieval-Augmented Generation (RAG) system that lets you upload PDFs and ask questions about them.
+
+## Features
+
+- PDF ingestion with chunking and semantic search
+- Configurable embedding and LLM providers (free or paid)
+- Event-driven pipeline with step-level retries via Inngest
+- Qdrant for persistent vector storage
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Streamlit |
+| Backend | FastAPI |
+| Workflow | Inngest |
+| Embeddings | sentence-transformers (local) or OpenAI |
+| LLM | Gemini 2.5 Flash (free) or GPT-4o-mini |
+| Vector DB | Qdrant |
+| PDF parsing | LlamaIndex PDFReader + SentenceSplitter |
+>>>>>>> 4bb0fcb (Add provider-agnostic RAG with Gemini and local embeddings)
 
 ## What’s inside?
 
+<<<<<<< HEAD
 | Layer | Technology | Alternatives (if you’re on a budget) |
 |-------|------------|--------------------------------------|
 | Frontend | Streamlit | – |
@@ -100,6 +124,23 @@ Open http://localhost:8501 and start uploading PDFs!
 ---
 
 ## Project Structure (what goes where)
+=======
+```
+PDF Upload → Streamlit
+  ↓ fires Inngest event "rag/ingest-pdf"
+FastAPI → Inngest Dev Server
+  ↓ Step 1: Load PDF + Chunk
+  ↓ Step 2: Embed + Upsert to Qdrant
+
+Query → Streamlit
+  ↓ fires Inngest event "rag/query-pdf"
+  ↓ Step 1: Embed query + Qdrant semantic search
+  ↓ Step 2: LLM answer generation
+  ↓ Streamlit displays answer + sources
+```
+
+## Project Structure
+>>>>>>> 4bb0fcb (Add provider-agnostic RAG with Gemini and local embeddings)
 
 ```
 eventrag/
@@ -107,6 +148,7 @@ eventrag/
 │   ├── config/
 │   │   └── settings.py          # All configuration via pydantic-settings (single source of truth)
 │   ├── ingestion/
+<<<<<<< HEAD
 │   │   ├── pdf_parser.py        # Loads PDF, splits into chunks
 │   │   └── embedder.py          # Embedding logic (easily swappable)
 │   ├── models/
@@ -120,12 +162,76 @@ eventrag/
 ├── docker-compose.yml           # Qdrant service definition
 ├── .env.example                 # Environment template (never commit .env)
 └── pyproject.toml               # Dependencies and project metadata
+=======
+│   │   ├── pdf_parser.py        # PDF load + chunk
+│   │   ├── embedder.py          # Embedding dispatcher (local | OpenAI)
+│   │   └── local_embedder.py    # sentence-transformers implementation
+│   ├── llm/
+│   │   └── gemini_provider.py   # Gemini implementation
+│   ├── models/
+│   │   └── schemas.py           # Pydantic models
+│   ├── retrieval/
+│   │   └── vector_store.py      # Qdrant wrapper
+│   └── utils/
+│       └── logging_config.py    # Structured logging
+├── main.py                      # FastAPI + Inngest functions
+├── streamlit_app.py             # Streamlit UI
+├── docker-compose.yml           # Qdrant service
+├── .env.example
+└── pyproject.toml
+>>>>>>> 4bb0fcb (Add provider-agnostic RAG with Gemini and local embeddings)
 ```
 
----
+## Setup
+
+### Prerequisites
+
+- Python 3.11+
+- Docker Desktop (for local Qdrant)
+- [Inngest Dev Server](https://www.inngest.com/docs/local-development)
+- Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey) (free)
+
+### 1. Install
+
+```bash
+git clone <repo>
+cd rag-app
+cp .env.example .env
+# Set GEMINI_API_KEY in .env
+uv sync
+```
+
+### 2. Start Qdrant
+
+```bash
+docker compose up qdrant -d
+```
+
+### 3. Start Inngest Dev Server
+
+```bash
+npx inngest-cli@latest dev -u http://localhost:8000/api/inngest
+```
+
+### 4. Start FastAPI
+
+```bash
+uvicorn main:app --reload --port 8000
+```
+
+Verify: http://localhost:8000/health
+
+### 5. Start Streamlit
+
+```bash
+streamlit run streamlit_app.py
+```
+
+App: http://localhost:8501
 
 ## Environment Variables
 
+<<<<<<< HEAD
 The `.env.example` file lists everything you can tweak. Here are the most important ones:
 
 | Variable | Default | Description |
@@ -146,9 +252,23 @@ The `.env.example` file lists everything you can tweak. Here are the most import
 - Set `OPENAI_EMBED_MODEL` to a local model name and change the embedding call in `app/ingestion/embedder.py` to use `sentence-transformers`.  
 - For the LLM, replace the `ctx.step.ai.infer` call in `main.py` with an HTTP call to Ollama or Groq.  
 We deliberately kept the embedding and LLM logic isolated, so it's easy to swap.
+=======
+| Variable | Default | Description |
+|---|---|---|
+| `EMBED_PROVIDER` | `local` | `local` or `openai` |
+| `LLM_PROVIDER` | `gemini` | `gemini` or `openai` |
+| `GEMINI_API_KEY` | *required for gemini* | Google AI Studio key |
+| `OPENAI_API_KEY` | *required for openai* | OpenAI key |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant instance |
+| `QDRANT_COLLECTION` | `docs` | Collection name |
+| `INNGEST_APP_ID` | `rag-app` | Must match in both main.py and streamlit |
+| `CHUNK_SIZE` | `1024` | Characters per chunk |
+| `DEFAULT_TOP_K` | `5` | Chunks retrieved per query |
+>>>>>>> 4bb0fcb (Add provider-agnostic RAG with Gemini and local embeddings)
 
----
+See `.env.example` for all options.
 
+<<<<<<< HEAD
 ## Why these choices? (Key design decisions)
 
 - **Inngest** – gives us step‑level retries, memoisation, and a beautiful UI. If the embedding API times out, only that step is retried – the PDF isn't reparsed. It also makes the whole flow auditable.
@@ -195,3 +315,21 @@ ruff check .
 This app handles the common RAG pitfalls (dimension mismatches, async issues, retries) so you can focus on retrieval quality or building a slick UI. Open an issue if you get stuck 
 
 Happy building! 🚀
+=======
+> **Note on dimension change**: switching from `EMBED_PROVIDER=openai` (1536 dims) to `local` (384 dims) will automatically recreate the Qdrant collection. Re-ingest your PDFs after switching.
+
+## Future Scope
+
+- Multi-document management (list, delete)
+- Conversation memory
+- Metadata filtering
+- Hybrid search (BM25 + dense)
+- Reranking
+- Streaming responses
+- RAG evaluation
+- Monitoring and caching
+
+## License
+
+MIT
+>>>>>>> 4bb0fcb (Add provider-agnostic RAG with Gemini and local embeddings)

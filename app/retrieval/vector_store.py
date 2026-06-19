@@ -1,25 +1,9 @@
 """
-Qdrant vector store wrapper.
+Qdrant vector store — singleton wrapper around QdrantClient.
 
-FIX B-05: QdrantStorage is now a module-level singleton via get_vector_store().
-          The original code called QdrantStorage() on every upsert and search,
-          opening a new TCP connection each time — connection pool exhaustion
-          under any concurrency.
-
-FIX B-08: URL, collection, and dimensions are read from Settings (env-
-          configurable) instead of being hardcoded.
-
-FIX B-12: search() now accepts and applies a score_threshold so semantically
-          irrelevant chunks are not returned to the LLM (prevents hallucination
-          from off-topic context).
-
-ADDED:    _ensure_collection() checks that an *existing* collection has the
-          correct vector dimensions; if not, it recreates it with the right
-          dimensions.  This prevents silent upsert failures when you change
-          the embed model.
-
-ADDED:    Payload index on source_id for fast per-document filtered search
-          (needed for V2 multi-document support).
+Creates the collection on first run and recreates it automatically if the
+embedding dimension changes (e.g. switching from OpenAI 1536 to local 384).
+All existing vectors are lost on recreation — re-ingest after switching providers.
 """
 
 from functools import lru_cache
@@ -43,7 +27,7 @@ class QdrantStorage:
 
     def __init__(self, settings: Settings) -> None:
         self.collection = settings.qdrant_collection
-        self.dim = settings.openai_embed_dim
+        self.dim = settings.active_embed_dim
         self.score_threshold = settings.qdrant_score_threshold
 
         logger.info("Connecting to Qdrant at %s", settings.qdrant_url)
@@ -125,17 +109,12 @@ class QdrantStorage:
         top_k: int = 5,
         score_threshold: float | None = None,
     ) -> dict:
-        """
-        Return the top-k most similar chunks above *score_threshold*.
-
-        FIX B-12: score_threshold prevents irrelevant chunks from reaching
-        the LLM.  Defaults to the value in Settings (configurable via env).
-        """
+        """Return the top-k most similar chunks above score_threshold."""
         threshold = score_threshold if score_threshold is not None else self.score_threshold
 
-        results = self.client.search(
+        response = self.client.query_points(
             collection_name=self.collection,
-            query_vector=query_vector,
+            query=query_vector,
             with_payload=True,
             limit=top_k,
             score_threshold=threshold,
@@ -144,7 +123,7 @@ class QdrantStorage:
         contexts: list[str] = []
         sources: set[str] = set()
 
-        for r in results:
+        for r in response.points:
             payload: dict = getattr(r, "payload", None) or {}
             text: str = payload.get("text", "")
             source: str = payload.get("source_id", "")
@@ -161,15 +140,7 @@ class QdrantStorage:
         return {"contexts": contexts, "sources": list(sources)}
 
 
-# ── Singleton accessor ──────────────────────────────────────────────────────
-
 @lru_cache(maxsize=1)
 def get_vector_store() -> QdrantStorage:
-    """
-    Return the singleton QdrantStorage instance.
-
-    FIX B-05: The original code called QdrantStorage() on every upsert and
-    search request, creating a new QdrantClient (TCP connection) each time.
-    lru_cache ensures the client is created exactly once.
-    """
+    """Return the singleton QdrantStorage instance."""
     return QdrantStorage(settings=get_settings())

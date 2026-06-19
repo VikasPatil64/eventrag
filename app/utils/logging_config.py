@@ -1,9 +1,5 @@
 """
-Structured logging configuration.
-
-FIX B-15: The original project had zero application-level logging.
-          Every module now calls `get_logger(__name__)` for consistent,
-          labelled output that is useful in both local and Docker environments.
+Structured logging configuration — call configure_logging() once at startup.
 """
 
 import logging
@@ -28,6 +24,9 @@ def configure_logging(level: int = logging.INFO) -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("openai").setLevel(logging.WARNING)
     logging.getLogger("qdrant_client").setLevel(logging.WARNING)
+    logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+    logging.getLogger("transformers").setLevel(logging.WARNING)
+    logging.getLogger("google").setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:

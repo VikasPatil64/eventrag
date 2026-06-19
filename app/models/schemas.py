@@ -1,8 +1,12 @@
 """
+<<<<<<< HEAD
 Shared data models used across the ingestion and retrieval pipeline.
 
 These models are passed between different steps of the RAG workflow
 and keep the data structure consistent throughout the application.
+=======
+Pydantic v2 models shared across the ingestion and retrieval pipelines.
+>>>>>>> 4bb0fcb (Add provider-agnostic RAG with Gemini and local embeddings)
 """
 
 from typing import Optional
@@ -42,10 +46,14 @@ class RAGSearchResult(pydantic.BaseModel):
 
 
 class RAGQueryResult(pydantic.BaseModel):
+<<<<<<< HEAD
     """
     Final response returned to the user after retrieval
     and answer generation.
     """
+=======
+    """Final output of the rag_query_pdf_ai function."""
+>>>>>>> 4bb0fcb (Add provider-agnostic RAG with Gemini and local embeddings)
 
     answer: str
     sources: list[str]

@@ -1,25 +1,5 @@
 """
 Streamlit frontend for the RAG application.
-
-BUG FIXES APPLIED
-─────────────────
-B-01  Inngest client uses settings.inngest_app_id — identical to main.py.
-      The old mismatch ("rag-app" server, "rag_app" client) caused every
-      event to fire but possibly route incorrectly.
-
-B-03  asyncio.run() replaced with a thread-isolated event loop so Streamlit's
-      own internal async machinery never collides with ours.
-
-B-13  Inngest run status correctly checked for "Completed" (Inngest's actual
-      terminal success value). Previous code checked a grab-bag of invented
-      status strings ("Succeeded", "Success", "Finished") that Inngest never
-      emits; and "Completed" was already in the list, so the real fix is
-      removing the noise and documenting the real states:
-          Running → Completed | Failed | Cancelled
-
-NOTE on event name: rag_query_pdf_ai in main.py now listens on "rag/query-pdf"
-(hyphen-separated, consistent with "rag/ingest-pdf"). The old event name was
-"rag/query_pdf_ai" (snake_case mix) — fixed on both sides.
 """
 
 import threading
@@ -57,10 +37,10 @@ with st.sidebar:
         step=1,
         help="How many document chunks are retrieved and sent to the LLM.",
     )
-    st.caption(f"**Embed model:** `{settings.openai_embed_model}`")
-    st.caption(f"**LLM:** `{settings.openai_llm_model}`")
+    st.caption(f"**Embed:** `{settings.embed_provider}` / `{settings.active_embed_model}`")
+    st.caption(f"**LLM:** `{settings.llm_provider}` / `{settings.active_llm_model}`")
     st.caption(f"**Collection:** `{settings.qdrant_collection}`")
-    st.caption(f"**Embed dim:** `{settings.openai_embed_dim}`")
+    st.caption(f"**Embed dim:** `{settings.active_embed_dim}`")
 
     st.divider()
     if st.button("🏥 Health check"):
@@ -76,7 +56,6 @@ with st.sidebar:
 # ── Inngest client (cached so one instance per Streamlit session) ───────────
 @st.cache_resource
 def _inngest_client() -> inngest.Inngest:
-    # FIX B-01: uses the same app_id as main.py via settings.
     return inngest.Inngest(app_id=settings.inngest_app_id, is_production=False)
 
 
@@ -84,12 +63,10 @@ def _inngest_client() -> inngest.Inngest:
 
 def _run_async(coro) -> object:
     """
-    FIX B-03: Run an async coroutine safely from Streamlit's sync context.
+    Run an async coroutine safely from Streamlit's sync context.
 
-    asyncio.run() fails with "This event loop is already running" in some
-    Streamlit versions.  We spin up a *new* event loop in a daemon thread,
-    execute the coroutine there, and block until done.  This avoids the
-    nest_asyncio hack and works in all environments.
+    Streamlit runs its own event loop; spinning a daemon thread with a fresh
+    loop avoids "This event loop is already running" errors in all environments.
     """
     result_holder: list = []
     error_holder: list = []
@@ -129,7 +106,6 @@ async def _send_ingest_event(pdf_path: Path) -> str:
 
 async def _send_query_event(question: str, top_k: int) -> str:
     client = _inngest_client()
-    # FIX: event name now "rag/query-pdf" — matches trigger in main.py.
     events = await client.send(
         inngest.Event(
             name="rag/query-pdf",
@@ -160,9 +136,7 @@ def _wait_for_run_output(
     """
     Poll Inngest dev-server until the function run reaches a terminal state.
 
-    FIX B-13: Inngest run statuses are: Running | Completed | Failed | Cancelled.
-    The old code checked ("Completed","Succeeded","Success","Finished") — the
-    last three are not real Inngest values.  We now check exactly "Completed".
+    Inngest run statuses: Running → Completed | Failed | Cancelled.
     """
     start = time.monotonic()
     last_status: str | None = None
@@ -222,7 +196,7 @@ uploaded = st.file_uploader(
     "Choose a PDF file",
     type=["pdf"],
     accept_multiple_files=False,
-    help="The PDF will be chunked, embedded with OpenAI, and stored in Qdrant.",
+    help="The PDF will be chunked, embedded, and stored in Qdrant.",
 )
 
 if uploaded is not None:

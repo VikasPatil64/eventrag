@@ -1,13 +1,8 @@
 """
 PDF loading and chunking service.
 
-FIX B-11: The original code split each PDF *page* individually with a loop:
-              for t in texts:           # t = one page
-                  chunks.extend(splitter.split_text(t))
-          This loses sentences that span page boundaries (e.g. a paragraph
-          that starts on page 3 and ends on page 4 becomes two tiny,
-          context-free fragments).  We now join all pages first, then chunk
-          the full document once.
+Pages are joined before splitting so sentence-boundary chunks aren't broken
+at page edges (a paragraph spanning pages stays intact).
 """
 
 import logging
@@ -24,10 +19,9 @@ logger = get_logger(__name__)
 
 def load_and_chunk_pdf(path: str) -> list[str]:
     """
-    Load a PDF from *path* and return a list of text chunks.
+    Load a PDF and return a list of text chunks.
 
-    Returns an empty list if the PDF contains no extractable text
-    (e.g. a scanned/image-only PDF) instead of crashing.
+    Returns [] if the PDF has no extractable text (e.g. scanned/image-only).
     """
     settings = get_settings()
     splitter = SentenceSplitter(
@@ -51,16 +45,14 @@ def load_and_chunk_pdf(path: str) -> list[str]:
     ]
 
     if not texts:
-        logger.warning("No extractable text found in '%s' (image-only PDF?)", resolved)
+        logger.warning("No extractable text found in '%s' (image-only PDF?).", resolved)
         return []
 
-    # FIX B-11: join all pages FIRST, then split once across the full document.
     full_text = "\n\n".join(texts)
     chunks = splitter.split_text(full_text)
 
     logger.info(
-        "Chunked '%s' → %d page(s), %d chunk(s) "
-        "(chunk_size=%d, overlap=%d)",
+        "Chunked '%s' -> %d page(s), %d chunk(s) (chunk_size=%d, overlap=%d).",
         resolved.name,
         len(docs),
         len(chunks),
