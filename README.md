@@ -1,6 +1,5 @@
 # EventRAG – RAG Application
 
-<<<<<<< HEAD
 A production-ready **Retrieval-Augmented Generation** app that lets you upload PDFs, chat with them, and get answers with citations. It’s built to be modular, observable, and easy to run locally.
 
 ![Streamlit UI](https://img.shields.io/badge/frontend-Streamlit-red) ![FastAPI](https://img.shields.io/badge/backend-FastAPI-green) ![Inngest](https://img.shields.io/badge/workflow-Inngest-blue) ![Qdrant](https://img.shields.io/badge/vector%20db-Qdrant-purple)
